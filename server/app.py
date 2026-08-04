@@ -7,6 +7,7 @@ from flask_jwt_extended import (
     create_access_token,
     get_jwt_identity,
     jwt_required,
+    verify_jwt_in_request,
     )
 
 from models import db, User, Expense
@@ -22,6 +23,14 @@ db.init_app(app)
 bcrypt = Bcrypt(app)
 jwt = JWTManager(app)
 api = Api(app)
+
+
+@app.before_request
+def check_if_logged_in():
+    open_access_list = ["signup", "login"]
+
+    if request.endpoint not in open_access_list and not verify_jwt_in_request():
+        return {"error": "401 Unauthorized"}, 401
 
 
 class Signup(Resource):
