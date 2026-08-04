@@ -2,15 +2,18 @@ from flask import Flask, jsonify, request, make_response
 from flask_restful import Api, Resource
 from flask_migrate import Migrate
 from flask_bcrypt import Bcrypt
+from marshmallow import ValidationError
+from sqlalchemy.exc import IntegrityError
 from flask_jwt_extended import (
     JWTManager,
     create_access_token,
     get_jwt_identity,
     jwt_required,
     verify_jwt_in_request,
-    )
+)
 
 from models import db, User, Expense
+from schemas import user_schema, expense_schema, expenses_schema
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
@@ -53,7 +56,7 @@ class Signup(Resource):
 
         token = create_access_token(identity=str(user.id))
         return make_response(
-            jsonify(token=token, user={"id": user.id, "username": user.username}),
+            jsonify(token=token, user=user_schema.dump(user)),
             201
         )
 
@@ -69,7 +72,7 @@ class Login(Resource):
         if user and user.authenticate(password):
             token = create_access_token(identity=str(user.id))
             return make_response(
-                jsonify(token=token, user={"id": user.id, "username":user.username}),
+                jsonify(token=token, user=user_schema.dump(user)),
                 200
             )
 
@@ -81,45 +84,54 @@ class Me(Resource):
     def get(self):
         user_id = get_jwt_identity()
         user = db.session.get(User, int(user_id))
-        return {"id": user.id, "username": user.username}, 200
+        return user_schema.dump(user), 200
 
 
-class Expenses(Resource):                                            
-    @jwt_required()                                                  
-    def get(self):                                                   
-        user_id = get_jwt_identity()                                 
-        expenses = Expense.query.filter_by(user_id=int(user_id)).all()  
-        return [                                                      
-            {                                                          
-                "id": e.id,                                            
-                "title": e.title,                                      
-                "amount": e.amount,                                     
-                "category": e.category,                                
-                "date": str(e.date),                                   
-            }                                                          
-            for e in expenses                                          
-        ], 200                                                         
+class Expenses(Resource):
+    @jwt_required()
+    def get(self):
+        user_id = get_jwt_identity()
 
-    @jwt_required()                                                   
-    def post(self):                                                   
-        user_id = get_jwt_identity()                                  
-        data = request.get_json() or {}                                
+        page = request.args.get("page", 1, type=int)
+        per_page = request.args.get("per_page", 5, type=int)
 
-        try:                                                           
-            expense = Expense(                                        
-                title=data.get("title"),                               
-                amount=data.get("amount"),                              
-                category=data.get("category"),                          
-                date=data.get("date"),                                  
-                user_id=int(user_id),                                   
-            )                                                           
-            db.session.add(expense)                                     
-            db.session.commit()                                         
-        except Exception as err:                                        
-            db.session.rollback()                                       
-            return {"errors": [str(err)]}, 400                          
+        pagination = Expense.query.filter_by(user_id=int(user_id)).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
 
-        return {"id": expense.id, "title": expense.title}, 201          
+        return {
+            "expenses": expenses_schema.dump(pagination.items),
+            "total": pagination.total,
+            "page": pagination.page,
+            "per_page": pagination.per_page,
+            "pages": pagination.pages,
+        }, 200
+
+    @jwt_required()
+    def post(self):
+        user_id = get_jwt_identity()
+        json_data = request.get_json() or {}
+
+        try:
+            data = expense_schema.load(json_data)
+        except ValidationError as err:
+            return {"errors": err.messages}, 400
+
+        try:
+            expense = Expense(
+                title=data["title"],
+                amount=data["amount"],
+                category=data["category"],
+                date=data["date"],
+                user_id=int(user_id),
+            )
+            db.session.add(expense)
+            db.session.commit()
+        except (ValueError, IntegrityError) as err:
+            db.session.rollback()
+            return {"errors": [str(err)]}, 400
+
+        return expense_schema.dump(expense), 201
 
 
 class ExpenseByID(Resource):
@@ -133,7 +145,13 @@ class ExpenseByID(Resource):
         if expense.user_id != int(user_id):
             return {"error": "Forbidden"}, 403
 
-        data = request.get_json() or {}
+        json_data = request.get_json() or {}
+
+        try:
+            data = expense_schema.load(json_data, partial=True)
+        except ValidationError as err:
+            return {"errors": err.messages}, 400
+
         try:
             if "title" in data:
                 expense.title = data["title"]
@@ -144,11 +162,11 @@ class ExpenseByID(Resource):
             if "date" in data:
                 expense.date = data["date"]
             db.session.commit()
-        except Exception as err:
+        except (ValueError, IntegrityError) as err:
             db.session.rollback()
             return {"errors": [str(err)]}, 400
 
-        return {"id": expense.id, "title": expense.title}, 200
+        return expense_schema.dump(expense), 200
 
     @jwt_required()
     def delete(self, id):
@@ -164,7 +182,7 @@ class ExpenseByID(Resource):
         db.session.commit()
         return {}, 204
 
-    
+
 api.add_resource(Signup, "/signup")
 api.add_resource(Login, "/login")
 api.add_resource(Me, "/me")
