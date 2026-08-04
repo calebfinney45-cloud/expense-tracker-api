@@ -49,7 +49,7 @@ needs to log in again to get a fresh one.
 
 1. Clone the repo and move into it:
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/calebfinney45-cloud/expense-tracker-api
    cd expense-tracker-api
    ```
 2. Install dependencies with Pipenv:
