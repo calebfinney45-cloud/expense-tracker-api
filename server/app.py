@@ -40,7 +40,7 @@ class Signup(Resource):
         password = data.get("password")
 
         if not username or not password:
-            return {"errors": ["username and assword are required"]}, 400
+            return {"errors": ["username and password are required"]}, 400
 
         try:
             user = User(username=username)
@@ -84,9 +84,92 @@ class Me(Resource):
         return {"id": user.id, "username": user.username}, 200
 
 
+class Expenses(Resource):                                            
+    @jwt_required()                                                  
+    def get(self):                                                   
+        user_id = get_jwt_identity()                                 
+        expenses = Expense.query.filter_by(user_id=int(user_id)).all()  
+        return [                                                      
+            {                                                          
+                "id": e.id,                                            
+                "title": e.title,                                      
+                "amount": e.amount,                                     
+                "category": e.category,                                
+                "date": str(e.date),                                   
+            }                                                          
+            for e in expenses                                          
+        ], 200                                                         
+
+    @jwt_required()                                                   
+    def post(self):                                                   
+        user_id = get_jwt_identity()                                  
+        data = request.get_json() or {}                                
+
+        try:                                                           
+            expense = Expense(                                        
+                title=data.get("title"),                               
+                amount=data.get("amount"),                              
+                category=data.get("category"),                          
+                date=data.get("date"),                                  
+                user_id=int(user_id),                                   
+            )                                                           
+            db.session.add(expense)                                     
+            db.session.commit()                                         
+        except Exception as err:                                        
+            db.session.rollback()                                       
+            return {"errors": [str(err)]}, 400                          
+
+        return {"id": expense.id, "title": expense.title}, 201          
+
+
+class ExpenseByID(Resource):
+    @jwt_required()
+    def patch(self, id):
+        user_id = get_jwt_identity()
+        expense = db.session.get(Expense, id)
+
+        if not expense:
+            return {"error": "Expense not found"}, 404
+        if expense.user_id != int(user_id):
+            return {"error": "Forbidden"}, 403
+
+        data = request.get_json() or {}
+        try:
+            if "title" in data:
+                expense.title = data["title"]
+            if "amount" in data:
+                expense.amount = data["amount"]
+            if "category" in data:
+                expense.category = data["category"]
+            if "date" in data:
+                expense.date = data["date"]
+            db.session.commit()
+        except Exception as err:
+            db.session.rollback()
+            return {"errors": [str(err)]}, 400
+
+        return {"id": expense.id, "title": expense.title}, 200
+
+    @jwt_required()
+    def delete(self, id):
+        user_id = get_jwt_identity()
+        expense = db.session.get(Expense, id)
+
+        if not expense:
+            return {"error": "Expense not found"}, 404
+        if expense.user_id != int(user_id):
+            return {"error": "Forbidden"}, 403
+
+        db.session.delete(expense)
+        db.session.commit()
+        return {}, 204
+
+    
 api.add_resource(Signup, "/signup")
 api.add_resource(Login, "/login")
 api.add_resource(Me, "/me")
+api.add_resource(Expenses, "/expenses")
+api.add_resource(ExpenseByID, "/expenses/<int:id>")
 
 
 if __name__ == '__main__':
