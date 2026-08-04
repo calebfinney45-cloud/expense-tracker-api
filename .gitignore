@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.env
+.venv
+Pipfile.lock
+.vscode/
+.idea/
+*.db
+*.sqlite3
+instance/
+.ipdb_history
+.DS_Store
